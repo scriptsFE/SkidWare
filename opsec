@@ -1,0 +1,325 @@
+local library = loadstring(game:HttpGet('https://raw.githubusercontent.com/cueshut/saves/main/criminality%20paste%20ui%20library'))()
+
+local window = library.new('Skiddy Ware 1.0', 'leadmarker')
+
+local tabVisuals = window.new_tab('rbxassetid://4483345998')
+local tabCombat = window.new_tab('rbxassetid://4483345998') 
+
+local sectionVisuals = tabVisuals.new_section('Visuals')
+local sectionCombat = tabCombat.new_section('Combat')
+
+local sectorVisuals = sectionVisuals.new_sector('Enemy ESP', 'Left')
+local sectorCombat = sectionCombat.new_sector('Config', 'Left')
+
+local espEnabled = false
+local tracersEnabled = false
+local aimbotEnabled = false
+local triggerbotEnabled = false
+local silentAimEnabled = true
+local aimbotRadius = 120 
+local maxTargetDistanceStuds = 400 
+local fireDebounce = false
+local fireRateDelay = 0.05
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+local cache = {}
+local themeBlueColor = Color3.fromRGB(84, 101, 255)
+local currentTargetPart = nil
+
+local targetingReticle = {
+    main = Drawing.new("Circle"),
+    inner = Drawing.new("Circle"),
+    outer = Drawing.new("Circle")
+}
+
+local function initReticle()
+    targetingReticle.main.Thickness = 1
+    targetingReticle.main.Color = themeBlueColor
+    targetingReticle.main.Radius = aimbotRadius
+    targetingReticle.main.Filled = false
+    targetingReticle.main.NumSides = 60
+    targetingReticle.main.Visible = false
+
+    targetingReticle.inner.Thickness = 1
+    targetingReticle.inner.Color = Color3.new(0, 0, 0)
+    targetingReticle.inner.Radius = aimbotRadius - 1
+    targetingReticle.inner.Filled = false
+    targetingReticle.inner.NumSides = 60
+    targetingReticle.inner.Visible = false
+
+    targetingReticle.outer.Thickness = 1
+    targetingReticle.outer.Color = Color3.new(0, 0, 0)
+    targetingReticle.outer.Radius = aimbotRadius + 1
+    targetingReticle.outer.Filled = false
+    targetingReticle.outer.NumSides = 60
+    targetingReticle.outer.Visible = false
+end
+
+local function newLine(color, thickness)
+    local l = Drawing.new("Line")
+    l.Thickness = thickness
+    l.Color = color
+    l.Transparency = 1
+    l.Visible = false
+    return l
+end
+
+local function makeEsp(plr)
+    if plr == LocalPlayer then return end
+    
+    local objects = {
+        t = newLine(themeBlueColor, 1),
+        b = newLine(themeBlueColor, 1),
+        l = newLine(themeBlueColor, 1),
+        r = newLine(themeBlueColor, 1),
+        
+        ot = newLine(Color3.new(0, 0, 0), 1),
+        ob = newLine(Color3.new(0, 0, 0), 1),
+        ol = newLine(Color3.new(0, 0, 0), 1),
+        or_ = newLine(Color3.new(0, 0, 0), 1),
+        
+        it = newLine(Color3.new(0, 0, 0), 1),
+        ib = newLine(Color3.new(0, 0, 0), 1),
+        il = newLine(Color3.new(0, 0, 0), 1),
+        ir = newLine(Color3.new(0, 0, 0), 1),
+        
+        tracerMain = newLine(themeBlueColor, 1),
+        tracerLeftOutline = newLine(Color3.new(0, 0, 0), 1),
+        tracerRightOutline = newLine(Color3.new(0, 0, 0), 1),
+        
+        name = Drawing.new("Text"),
+        hp = Drawing.new("Text")
+    }
+    
+    objects.name.Center = true
+    objects.name.Outline = true
+    objects.name.OutlineColor = Color3.fromRGB(10, 10, 10)
+    objects.name.Font = Drawing.Fonts.Monospace
+    objects.name.Color = Color3.fromRGB(255, 255, 255)
+    
+    objects.hp.Center = true
+    objects.hp.Outline = true
+    objects.hp.OutlineColor = Color3.fromRGB(10, 10, 10)
+    objects.hp.Font = Drawing.Fonts.Monospace
+    objects.hp.Color = Color3.fromRGB(255, 255, 255)
+    
+    cache[plr] = objects
+end
+
+local function removeEsp(plr)
+    if cache[plr] then
+        for _, obj in pairs(cache[plr]) do
+            obj:Remove()
+        end
+        cache[plr] = nil
+    end
+end
+
+initReticle()
+for _, plr in pairs(Players:GetPlayers()) do makeEsp(plr) end
+Players.PlayerAdded:Connect(makeEsp)
+Players.PlayerRemoving:Connect(removeEsp)
+
+local toggleEsp = sectorVisuals.element('Toggle', 'Enabled', false, function(v)
+    espEnabled = v.Toggle
+end)
+
+local toggleTracers = sectorVisuals.element('Toggle', 'Tracers', false, function(v)
+    tracersEnabled = v.Toggle
+end)
+
+local toggleAimbot = sectorCombat.element('Toggle', 'Aimbot', false, function(v)
+    aimbotEnabled = v.Toggle
+end)
+
+local toggleTrigger = sectorCombat.element('Toggle', 'Triggerbot', false, function(v)
+    triggerbotEnabled = v.Toggle
+end)
+
+local oldRaycast
+oldRaycast = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    if silentAimEnabled and currentTargetPart and (method == "Raycast" or method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") then
+        if tostring(self) == "Workspace" then
+            local origin = args[1]
+            if typeof(origin) == "Vector3" then
+                args[2] = (currentTargetPart.Position - origin).Unit * 1000
+                return oldRaycast(self, unpack(args))
+            end
+        end
+    end
+    return oldRaycast(self, ...)
+end)
+
+RunService.RenderStepped:Connect(function()
+    local mouseLocationData = UserInputService:GetMouseLocation()
+    local viewportSizeData = Camera.ViewportSize
+    local screenCenter = Vector2.new(viewportSizeData.X / 2, viewportSizeData.Y / 2)
+    local screenCenterBottomOffset = Vector2.new(viewportSizeData.X / 2, viewportSizeData.Y)
+    
+    local isMobile = (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
+    local activeAnchor = isMobile and screenCenter or mouseLocationData
+
+    if aimbotEnabled then
+        targetingReticle.main.Radius = aimbotRadius
+        targetingReticle.main.Position = activeAnchor
+        targetingReticle.inner.Radius = aimbotRadius - 1
+        targetingReticle.inner.Position = activeAnchor
+        targetingReticle.outer.Radius = aimbotRadius + 1
+        targetingReticle.outer.Position = activeAnchor
+        
+        targetingReticle.main.Visible = true
+        targetingReticle.inner.Visible = true
+        targetingReticle.outer.Visible = true
+    else
+        targetingReticle.main.Visible = false
+        targetingReticle.inner.Visible = false
+        targetingReticle.outer.Visible = false
+    end
+    
+    local targetLockedOnEnemy = nil
+    local closestSelectionDistance = math.huge
+
+    for plr, obj in pairs(cache) do
+        local characterModelData = plr.Character
+        local rootPartCharacterData = characterModelData and characterModelData:FindFirstChild("HumanoidRootPart")
+        local humanoidCharacterData = characterModelData and characterModelData:FindFirstChild("Humanoid")
+        
+        if rootPartCharacterData and humanoidCharacterData and humanoidCharacterData.Health > 0 and plr.Team ~= LocalPlayer.Team then
+            local rootCFrameCharacterData, rootSizeCharacterData = characterModelData:GetBoundingBox()
+            local topPositionScreenCharacterData, topOnScreenCharacterData = Camera:WorldToViewportPoint((rootCFrameCharacterData * CFrame.new(0, rootSizeCharacterData.Y / 2, 0)).Position)
+            local bottomPositionScreenCharacterData, bottomOnScreenCharacterData = Camera:WorldToViewportPoint((rootCFrameCharacterData * CFrame.new(0, -rootSizeCharacterData.Y / 2, 0)).Position)
+            
+            local magnitudeDistanceCharacterData = (Camera.CFrame.Position - rootPartCharacterData.Position).Magnitude
+            
+            if espEnabled and (topOnScreenCharacterData or bottomOnScreenCharacterData) then
+                local heightFrameBoundsCharacterData = math.abs(topPositionScreenCharacterData.Y - bottomPositionScreenCharacterData.Y)
+                local widthFrameBoundsCharacterData = heightFrameBoundsCharacterData * 0.6
+                local xOriginFrameBoundsCharacterData = bottomPositionScreenCharacterData.X - (widthFrameBoundsCharacterData / 2)
+                local yOriginFrameBoundsCharacterData = topPositionScreenCharacterData.Y
+                local xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData = xOriginFrameBoundsCharacterData + widthFrameBoundsCharacterData, yOriginFrameBoundsCharacterData + heightFrameBoundsCharacterData
+                
+                obj.t.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)   obj.t.To = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
+                obj.b.From = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)  obj.b.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                obj.l.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)   obj.l.To = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                obj.r.From = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)  obj.r.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                
+                obj.ot.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData - 1)   obj.ot.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData - 1)
+                obj.ob.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData + 1)  obj.ob.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData + 1)
+                obj.ol.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData - 1)   obj.ol.To = Vector2.new(xOriginFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData + 1)
+                obj.or_.From = Vector2.new(xEndFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData - 1)  obj.or_.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData + 1)
+                
+                obj.it.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData + 1)   obj.it.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData + 1)
+                obj.ib.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData - 1)  obj.ib.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData - 1)
+                obj.il.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData + 1)   obj.il.To = Vector2.new(xOriginFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData - 1)
+                obj.ir.From = Vector2.new(xEndFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData + 1)  obj.ir.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData - 1)
+                
+                obj.t.Visible = true; obj.b.Visible = true; obj.l.Visible = true; obj.r.Visible = true
+                obj.ot.Visible = true; obj.ob.Visible = true; obj.ol.Visible = true; obj.or_.Visible = true
+                obj.it.Visible = true; obj.ib.Visible = true; obj.il.Visible = true; obj.ir.Visible = true
+                
+                if magnitudeDistanceCharacterData < 400 then
+                    local fontSizeFrameCharacterData = math.clamp(math.floor(13 - (magnitudeDistanceCharacterData / 45)), 9, 13)
+                    
+                    obj.name.Size = fontSizeFrameCharacterData
+                    obj.name.Text = string.lower(plr.Name)
+                    obj.name.Position = Vector2.new(bottomPositionScreenCharacterData.X, yOriginFrameBoundsCharacterData - (fontSizeFrameCharacterData + 3))
+                    obj.name.Visible = true
+                    
+                    obj.hp.Size = fontSizeFrameCharacterData
+                    obj.hp.Text = math.floor(humanoidCharacterData.Health) .. "hp"
+                    obj.hp.Position = Vector2.new(bottomPositionScreenCharacterData.X, yEndFrameBoundsCharacterData + 2)
+                    obj.hp.Visible = true
+                else
+                    obj.name.Visible = false
+                    obj.hp.Visible = false
+                end
+            else
+                obj.t.Visible = false; obj.b.Visible = false; obj.l.Visible = false; obj.r.Visible = false
+                obj.ot.Visible = false; obj.ob.Visible = false; obj.ol.Visible = false; obj.or_.Visible = false
+                obj.it.Visible = false; obj.ib.Visible = false; obj.il.Visible = false; obj.ir.Visible = false
+                obj.name.Visible = false
+                obj.hp.Visible = false
+            end
+            
+            if tracersEnabled and bottomOnScreenCharacterData then
+                local vector2OriginCharacterData = Vector2.new(bottomPositionScreenCharacterData.X, bottomPositionScreenCharacterData.Y)
+                obj.tracerMain.From = screenCenterBottomOffset
+                obj.tracerMain.To = vector2OriginCharacterData
+                
+                local magnitudeMagnitudeTracerVectorData = (vector2OriginCharacterData - screenCenterBottomOffset).Magnitude
+                if magnitudeMagnitudeTracerVectorData > 0 then
+                    local vector2NormalVectorData = (vector2OriginCharacterData - screenCenterBottomOffset).Unit
+                    local vector2TangentVectorData = Vector2.new(-vector2NormalVectorData.Y, vector2NormalVectorData.X)
+                    
+                    obj.tracerLeftOutline.From = screenCenterBottomOffset - vector2TangentVectorData
+                    obj.tracerLeftOutline.To = vector2OriginCharacterData - vector2TangentVectorData
+                    
+                    obj.tracerRightOutline.From = screenCenterBottomOffset + vector2TangentVectorData
+                    obj.tracerRightOutline.To = vector2OriginCharacterData + vector2TangentVectorData
+                    
+                    obj.tracerMain.Visible = true
+                    obj.tracerLeftOutline.Visible = true
+                    obj.tracerRightOutline.Visible = true
+                else
+                    obj.tracerMain.Visible = false
+                    obj.tracerLeftOutline.Visible = false
+                    obj.tracerRightOutline.Visible = false
+                end
+            else
+                obj.tracerMain.Visible = false
+                obj.tracerLeftOutline.Visible = false
+                obj.tracerRightOutline.Visible = false
+            end
+
+            if aimbotEnabled and magnitudeDistanceCharacterData < maxTargetDistanceStuds and (topOnScreenCharacterData or bottomOnScreenCharacterData) then
+                local screenPos = Vector2.new(bottomPositionScreenCharacterData.X, (topPositionScreenCharacterData.Y + bottomPositionScreenCharacterData.Y) / 2)
+                local screenDistance = (screenPos - activeAnchor).Magnitude
+                
+                if screenDistance < aimbotRadius and screenDistance < closestSelectionDistance then
+                    closestSelectionDistance = screenDistance
+                    targetLockedOnEnemy = rootPartCharacterData
+                end
+            end
+        else
+            for _, item in pairs(obj) do
+                item.Visible = false
+            end
+        end
+    end
+
+    currentTargetPart = targetLockedOnEnemy
+
+    if currentTargetPart and aimbotEnabled then
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, currentTargetPart.Position)
+        
+        if triggerbotEnabled and not fireDebounce then
+            fireDebounce = true
+            
+            if isMobile then
+                local equippedTool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                if equippedTool then
+                    equippedTool:Activate()
+                end
+                task.wait(fireRateDelay)
+                fireDebounce = false
+            else
+                task.spawn(function()
+                    VirtualInputManager:SendMouseButtonEvent(activeAnchor.X, activeAnchor.Y, 0, true, game, 1)
+                    task.wait(0.02)
+                    VirtualInputManager:SendMouseButtonEvent(activeAnchor.X, activeAnchor.Y, 0, false, game, 1)
+                    task.wait(fireRateDelay)
+                    fireDebounce = false
+                end)
+            end
+        end
+    end
+end)
