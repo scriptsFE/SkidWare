@@ -41,12 +41,13 @@ local customSkyInstance = nil
 local originalWeaponProperties = {}
 local removedTexturesCache = {}
 
--- Weapon coloring cache optimization
 local cachedWeaponParts = {}
 local currentEquippedTool = nil
 
 local targetingReticle = {
-    main = Drawing.new("Circle")
+    main = Drawing.new("Circle"),
+    inner = Drawing.new("Circle"),
+    outer = Drawing.new("Circle")
 }
 
 local function initReticle()
@@ -54,8 +55,22 @@ local function initReticle()
     targetingReticle.main.Color = themeBlueColor
     targetingReticle.main.Radius = aimbotRadius
     targetingReticle.main.Filled = false
-    targetingReticle.main.NumSides = 32 -- Reduced from 60 for performance
+    targetingReticle.main.NumSides = 60
     targetingReticle.main.Visible = false
+
+    targetingReticle.inner.Thickness = 1
+    targetingReticle.inner.Color = Color3.new(0, 0, 0)
+    targetingReticle.inner.Radius = aimbotRadius - 1
+    targetingReticle.inner.Filled = false
+    targetingReticle.inner.NumSides = 60
+    targetingReticle.inner.Visible = false
+
+    targetingReticle.outer.Thickness = 1
+    targetingReticle.outer.Color = Color3.new(0, 0, 0)
+    targetingReticle.outer.Radius = aimbotRadius + 1
+    targetingReticle.outer.Filled = false
+    targetingReticle.outer.NumSides = 60
+    targetingReticle.outer.Visible = false
 end
 
 local function newLine(color, thickness)
@@ -81,13 +96,26 @@ local function makeEsp(obj)
     if not obj or not obj:IsA("Model") or cache[obj] then return end
     if Players:GetPlayerFromCharacter(obj) or obj == LocalPlayer.Character then return end
     
-    -- Simplified box drawing (4 main lines + 1 tracer + 1 text) to drastically reduce RenderStepped overhead
     local objects = {
         t = newLine(themeBlueColor, 1),
         b = newLine(themeBlueColor, 1),
         l = newLine(themeBlueColor, 1),
         r = newLine(themeBlueColor, 1),
+        
+        ot = newLine(Color3.new(0, 0, 0), 1),
+        ob = newLine(Color3.new(0, 0, 0), 1),
+        ol = newLine(Color3.new(0, 0, 0), 1),
+        or_ = newLine(Color3.new(0, 0, 0), 1),
+        
+        it = newLine(Color3.new(0, 0, 0), 1),
+        ib = newLine(Color3.new(0, 0, 0), 1),
+        il = newLine(Color3.new(0, 0, 0), 1),
+        ir = newLine(Color3.new(0, 0, 0), 1),
+        
         tracerMain = newLine(themeBlueColor, 1),
+        tracerLeftOutline = newLine(Color3.new(0, 0, 0), 1),
+        tracerRightOutline = newLine(Color3.new(0, 0, 0), 1),
+        
         hp = Drawing.new("Text")
     }
     
@@ -111,7 +139,6 @@ end
 
 initReticle()
 
--- Initial scan
 for _, descendant in pairs(workspace:GetDescendants()) do
     if descendant:IsA("Model") then
         makeEsp(descendant)
@@ -153,6 +180,48 @@ end)
 
 local buttonRevertFov = sectorFov.element('Button', 'reset fov', nil, function()
     Camera.FieldOfView = 70
+end)
+
+local buttonChangeSkybox = sectorFov.element('Button', 'custom skybox', nil, function()
+    if customSkyInstance then
+        customSkyInstance:Destroy()
+    end
+    if #oldSkyboxes == 0 then
+        for _, obj in pairs(game:GetService("Lighting"):GetChildren()) do
+            if obj:IsA("Sky") then
+                table.insert(oldSkyboxes, obj)
+                obj.Parent = nil
+            end
+        end
+    else
+        for _, obj in pairs(game:GetService("Lighting"):GetChildren()) do
+            if obj:IsA("Sky") and obj ~= customSkyInstance then
+                obj.Parent = nil
+            end
+        end
+    end
+    customSkyInstance = Instance.new("Sky")
+    customSkyInstance.Name = "CustomSkybox"
+    
+    customSkyInstance.SkyboxBk = "http://www.roblox.com/asset/?id=159454299"
+    customSkyInstance.SkyboxDn = "http://www.roblox.com/asset/?id=159454296"
+    customSkyInstance.SkyboxFt = "http://www.roblox.com/asset/?id=159454293"
+    customSkyInstance.SkyboxLf = "http://www.roblox.com/asset/?id=159454286"
+    customSkyInstance.SkyboxRt = "http://www.roblox.com/asset/?id=159454300"
+    customSkyInstance.SkyboxUp = "http://www.roblox.com/asset/?id=159454288"
+    
+    customSkyInstance.Parent = game:GetService("Lighting")
+end)
+
+local buttonRevertSkybox = sectorFov.element('Button', 'reset sky', nil, function()
+    if customSkyInstance then
+        customSkyInstance:Destroy()
+        customSkyInstance = nil
+    end
+    for _, obj in pairs(oldSkyboxes) do
+        obj.Parent = game:GetService("Lighting")
+    end
+    table.clear(oldSkyboxes)
 end)
 
 local buttonColoredWeapon = sectorColoredWeapon.element('Button', 'colored weapon', nil, function()
@@ -200,7 +269,6 @@ local toggleTrigger = sectorCombatConfig.element('Toggle', 'Triggerbot', false, 
     triggerbotEnabled = v.Toggle
 end)
 
--- Optimized Silent Aim Hook
 local oldRaycast
 oldRaycast = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
@@ -223,7 +291,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     currentEquippedTool = nil
 end)
 
--- Cache tool instances when equipping to avoid GetDescendants every frame
 local function updateWeaponCache(tool)
     table.clear(cachedWeaponParts)
     if not tool then return end
@@ -248,6 +315,29 @@ local function updateWeaponCache(tool)
     end
 end
 
+local function setLinesVisible(obj, state)
+    obj.t.Visible = state
+    obj.b.Visible = state
+    obj.l.Visible = state
+    obj.r.Visible = state
+    
+    obj.ot.Visible = state
+    obj.ob.Visible = state
+    obj.ol.Visible = state
+    obj.or_.Visible = state
+    
+    obj.it.Visible = state
+    obj.ib.Visible = state
+    obj.il.Visible = state
+    obj.ir.Visible = state
+end
+
+local function setTracersVisible(obj, state)
+    obj.tracerMain.Visible = state
+    obj.tracerLeftOutline.Visible = state
+    obj.tracerRightOutline.Visible = state
+end
+
 RunService.RenderStepped:Connect(function()
     local mouseLocationData = UserInputService:GetMouseLocation()
     local viewportSizeData = Camera.ViewportSize
@@ -257,7 +347,6 @@ RunService.RenderStepped:Connect(function()
     local isMobile = (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
     local activeAnchor = isMobile and screenCenterVector or mouseLocationData
 
-    -- Weapon coloring logic (Cached)
     if rainbowWeaponEnabled then
         local characterModelData = LocalPlayer.Character
         if characterModelData then
@@ -286,15 +375,23 @@ RunService.RenderStepped:Connect(function()
     if aimbotEnabled then
         targetingReticle.main.Radius = aimbotRadius
         targetingReticle.main.Position = activeAnchor
+        targetingReticle.inner.Radius = aimbotRadius - 1
+        targetingReticle.inner.Position = activeAnchor
+        targetingReticle.outer.Radius = aimbotRadius + 1
+        targetingReticle.outer.Position = activeAnchor
+        
         targetingReticle.main.Visible = true
+        targetingReticle.inner.Visible = true
+        targetingReticle.outer.Visible = true
     else
         targetingReticle.main.Visible = false
+        targetingReticle.inner.Visible = false
+        targetingReticle.outer.Visible = false
     end
     
     local targetLockedOnEnemy = nil
     local closestSelectionDistance = math.huge
 
-    -- Main Rendering Loop
     for npcModel, obj in pairs(cache) do
         if not npcModel or not npcModel.Parent then
             removeEsp(npcModel)
@@ -304,7 +401,6 @@ RunService.RenderStepped:Connect(function()
             if targetPart then
                 local magnitudeDistanceCharacterData = (Camera.CFrame.Position - targetPart.Position).Magnitude
                 
-                -- Skip processing entirely if entity is too far away
                 if magnitudeDistanceCharacterData <= maxTargetDistanceStuds then
                     local partCFrame = targetPart.CFrame
                     local topPositionScreenCharacterData, topOnScreenCharacterData = Camera:WorldToViewportPoint((partCFrame * CFrame.new(0, 3, 0)).Position)
@@ -318,19 +414,22 @@ RunService.RenderStepped:Connect(function()
                         local xEndFrameBoundsCharacterData = xOriginFrameBoundsCharacterData + widthFrameBoundsCharacterData
                         local yEndFrameBoundsCharacterData = yOriginFrameBoundsCharacterData + heightFrameBoundsCharacterData
                         
-                        obj.t.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
-                        obj.t.To = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
+                        obj.t.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)   obj.t.To = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
+                        obj.b.From = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)  obj.b.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                        obj.l.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)   obj.l.To = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                        obj.r.From = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)  obj.r.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
                         
-                        obj.b.From = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
-                        obj.b.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                        obj.ot.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData - 1)   obj.ot.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData - 1)
+                        obj.ob.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData + 1)  obj.ob.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData + 1)
+                        obj.ol.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData - 1)   obj.ol.To = Vector2.new(xOriginFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData + 1)
+                        obj.or_.From = Vector2.new(xEndFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData - 1)  obj.or_.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData + 1)
                         
-                        obj.l.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
-                        obj.l.To = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                        obj.it.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData + 1)   obj.it.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData + 1)
+                        obj.ib.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData - 1)  obj.ib.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData - 1)
+                        obj.il.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData + 1)   obj.il.To = Vector2.new(xOriginFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData - 1)
+                        obj.ir.From = Vector2.new(xEndFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData + 1)  obj.ir.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData - 1)
                         
-                        obj.r.From = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
-                        obj.r.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
-                        
-                        obj.t.Visible = true; obj.b.Visible = true; obj.l.Visible = true; obj.r.Visible = true
+                        setLinesVisible(obj, true)
                         
                         local humanoid = npcModel:FindFirstChildOfClass("Humanoid")
                         if humanoid and magnitudeDistanceCharacterData < 250 then
@@ -343,16 +442,32 @@ RunService.RenderStepped:Connect(function()
                             obj.hp.Visible = false
                         end
                     else
-                        obj.t.Visible = false; obj.b.Visible = false; obj.l.Visible = false; obj.r.Visible = false
+                        setLinesVisible(obj, false)
                         obj.hp.Visible = false
                     end
                     
                     if tracersEnabled and bottomOnScreenCharacterData then
+                        local vector2OriginCharacterData = Vector2.new(bottomPositionScreenCharacterData.X, bottomPositionScreenCharacterData.Y)
                         obj.tracerMain.From = screenCenterBottomOffset
-                        obj.tracerMain.To = Vector2.new(bottomPositionScreenCharacterData.X, bottomPositionScreenCharacterData.Y)
-                        obj.tracerMain.Visible = true
+                        obj.tracerMain.To = vector2OriginCharacterData
+                        
+                        local magnitudeMagnitudeTracerVectorData = (vector2OriginCharacterData - screenCenterBottomOffset).Magnitude
+                        if magnitudeMagnitudeTracerVectorData > 0 then
+                            local vector2NormalVectorData = (vector2OriginCharacterData - screenCenterBottomOffset).Unit
+                            local vector2TangentVectorData = Vector2.new(-vector2NormalVectorData.Y, vector2NormalVectorData.X)
+                            
+                            obj.tracerLeftOutline.From = screenCenterBottomOffset - vector2TangentVectorData
+                            obj.tracerLeftOutline.To = vector2OriginCharacterData - vector2TangentVectorData
+                            
+                            obj.tracerRightOutline.From = screenCenterBottomOffset + vector2TangentVectorData
+                            obj.tracerRightOutline.To = vector2OriginCharacterData + vector2TangentVectorData
+                            
+                            setTracersVisible(obj, true)
+                        else
+                            setTracersVisible(obj, false)
+                        end
                     else
-                        obj.tracerMain.Visible = false
+                        setTracersVisible(obj, false)
                     end
 
                     if aimbotEnabled and (topOnScreenCharacterData or bottomOnScreenCharacterData) then
@@ -365,14 +480,13 @@ RunService.RenderStepped:Connect(function()
                         end
                     end
                 else
-                    -- Hide drawings for out-of-range entities
-                    obj.t.Visible = false; obj.b.Visible = false; obj.l.Visible = false; obj.r.Visible = false
-                    obj.tracerMain.Visible = false
+                    setLinesVisible(obj, false)
+                    setTracersVisible(obj, false)
                     obj.hp.Visible = false
                 end
             else
-                obj.t.Visible = false; obj.b.Visible = false; obj.l.Visible = false; obj.r.Visible = false
-                obj.tracerMain.Visible = false
+                setLinesVisible(obj, false)
+                setTracersVisible(obj, false)
                 obj.hp.Visible = false
             end
         end
