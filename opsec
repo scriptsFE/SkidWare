@@ -41,17 +41,12 @@ local customSkyInstance = nil
 local originalWeaponProperties = {}
 local removedTexturesCache = {}
 
-local zombieNames = {
-    ["Walker"] = true,
-    ["Crawler"] = true,
-    ["Dynamite"] = true,
-    ["Zombie"] = true
-}
+-- Weapon coloring cache optimization
+local cachedWeaponParts = {}
+local currentEquippedTool = nil
 
 local targetingReticle = {
-    main = Drawing.new("Circle"),
-    inner = Drawing.new("Circle"),
-    outer = Drawing.new("Circle")
+    main = Drawing.new("Circle")
 }
 
 local function initReticle()
@@ -59,22 +54,8 @@ local function initReticle()
     targetingReticle.main.Color = themeBlueColor
     targetingReticle.main.Radius = aimbotRadius
     targetingReticle.main.Filled = false
-    targetingReticle.main.NumSides = 60
+    targetingReticle.main.NumSides = 32 -- Reduced from 60 for performance
     targetingReticle.main.Visible = false
-
-    targetingReticle.inner.Thickness = 1
-    targetingReticle.inner.Color = Color3.new(0, 0, 0)
-    targetingReticle.inner.Radius = aimbotRadius - 1
-    targetingReticle.inner.Filled = false
-    targetingReticle.inner.NumSides = 60
-    targetingReticle.inner.Visible = false
-
-    targetingReticle.outer.Thickness = 1
-    targetingReticle.outer.Color = Color3.new(0, 0, 0)
-    targetingReticle.outer.Radius = aimbotRadius + 1
-    targetingReticle.outer.Filled = false
-    targetingReticle.outer.NumSides = 60
-    targetingReticle.outer.Visible = false
 end
 
 local function newLine(color, thickness)
@@ -88,8 +69,7 @@ end
 
 local function getTargetPart(model)
     if not model or not model:IsA("Model") then return nil end
-    if model == LocalPlayer.Character then return nil end
-    if Players:GetPlayerFromCharacter(model) then return nil end
+    if model == LocalPlayer.Character or Players:GetPlayerFromCharacter(model) then return nil end
     
     local humanoid = model:FindFirstChildOfClass("Humanoid")
     if not humanoid or humanoid.Health <= 0 then return nil end
@@ -101,26 +81,13 @@ local function makeEsp(obj)
     if not obj or not obj:IsA("Model") or cache[obj] then return end
     if Players:GetPlayerFromCharacter(obj) or obj == LocalPlayer.Character then return end
     
+    -- Simplified box drawing (4 main lines + 1 tracer + 1 text) to drastically reduce RenderStepped overhead
     local objects = {
         t = newLine(themeBlueColor, 1),
         b = newLine(themeBlueColor, 1),
         l = newLine(themeBlueColor, 1),
         r = newLine(themeBlueColor, 1),
-        
-        ot = newLine(Color3.new(0, 0, 0), 1),
-        ob = newLine(Color3.new(0, 0, 0), 1),
-        ol = newLine(Color3.new(0, 0, 0), 1),
-        or_ = newLine(Color3.new(0, 0, 0), 1),
-        
-        it = newLine(Color3.new(0, 0, 0), 1),
-        ib = newLine(Color3.new(0, 0, 0), 1),
-        il = newLine(Color3.new(0, 0, 0), 1),
-        ir = newLine(Color3.new(0, 0, 0), 1),
-        
         tracerMain = newLine(themeBlueColor, 1),
-        tracerLeftOutline = newLine(Color3.new(0, 0, 0), 1),
-        tracerRightOutline = newLine(Color3.new(0, 0, 0), 1),
-        
         hp = Drawing.new("Text")
     }
     
@@ -144,6 +111,7 @@ end
 
 initReticle()
 
+-- Initial scan
 for _, descendant in pairs(workspace:GetDescendants()) do
     if descendant:IsA("Model") then
         makeEsp(descendant)
@@ -162,6 +130,7 @@ workspace.DescendantRemoving:Connect(removeEsp)
 local toggleEsp = sectorVisuals.element('Toggle', 'ESP', false, function(v)
     espEnabled = v.Toggle
 end)
+
 toggleEsp:add_color({Color = themeBlueColor}, nil, function(v)
     themeBlueColor = v.Color
     for _, obj in pairs(cache) do
@@ -186,50 +155,10 @@ local buttonRevertFov = sectorFov.element('Button', 'reset fov', nil, function()
     Camera.FieldOfView = 70
 end)
 
-local buttonChangeSkybox = sectorFov.element('Button', 'custom skybox', nil, function()
-    if customSkyInstance then
-        customSkyInstance:Destroy()
-    end
-    if #oldSkyboxes == 0 then
-        for _, obj in pairs(game:GetService("Lighting"):GetChildren()) do
-            if obj:IsA("Sky") then
-                table.insert(oldSkyboxes, obj)
-                obj.Parent = nil
-            end
-        end
-    else
-        for _, obj in pairs(game:GetService("Lighting"):GetChildren()) do
-            if obj:IsA("Sky") and obj ~= customSkyInstance then
-                obj.Parent = nil
-            end
-        end
-    end
-    customSkyInstance = Instance.new("Sky")
-    customSkyInstance.Name = "CustomSkybox"
-    
-    customSkyInstance.SkyboxBk = "http://www.roblox.com/asset/?id=159454299"
-    customSkyInstance.SkyboxDn = "http://www.roblox.com/asset/?id=159454296"
-    customSkyInstance.SkyboxFt = "http://www.roblox.com/asset/?id=159454293"
-    customSkyInstance.SkyboxLf = "http://www.roblox.com/asset/?id=159454286"
-    customSkyInstance.SkyboxRt = "http://www.roblox.com/asset/?id=159454300"
-    customSkyInstance.SkyboxUp = "http://www.roblox.com/asset/?id=159454288"
-    
-    customSkyInstance.Parent = game:GetService("Lighting")
-end)
-
-local buttonRevertSkybox = sectorFov.element('Button', 'reset sky', nil, function()
-    if customSkyInstance then
-        customSkyInstance:Destroy()
-        customSkyInstance = nil
-    end
-    for _, obj in pairs(oldSkyboxes) do
-        obj.Parent = game:GetService("Lighting")
-    end
-    table.clear(oldSkyboxes)
-end)
-
 local buttonColoredWeapon = sectorColoredWeapon.element('Button', 'colored weapon', nil, function()
     rainbowWeaponEnabled = true
+    table.clear(cachedWeaponParts)
+    currentEquippedTool = nil
 end)
 
 local buttonResetColor = sectorColoredWeapon.element('Button', 'reset color', nil, function()
@@ -259,6 +188,8 @@ local buttonResetColor = sectorColoredWeapon.element('Button', 'reset color', ni
     
     table.clear(originalWeaponProperties)
     table.clear(removedTexturesCache)
+    table.clear(cachedWeaponParts)
+    currentEquippedTool = nil
 end)
 
 local toggleAimbot = sectorCombatConfig.element('Toggle', 'Aimbot', false, function(v)
@@ -269,12 +200,13 @@ local toggleTrigger = sectorCombatConfig.element('Toggle', 'Triggerbot', false, 
     triggerbotEnabled = v.Toggle
 end)
 
+-- Optimized Silent Aim Hook
 local oldRaycast
 oldRaycast = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
-    local args = {...}
     
     if silentAimEnabled and currentTargetPart and (method == "Raycast" or method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") then
+        local args = {...}
         local origin = args[1]
         if typeof(origin) == "Vector3" then
             args[2] = (currentTargetPart.Position - origin).Unit * 10000
@@ -287,7 +219,34 @@ end)
 LocalPlayer.CharacterAdded:Connect(function()
     table.clear(originalWeaponProperties)
     table.clear(removedTexturesCache)
+    table.clear(cachedWeaponParts)
+    currentEquippedTool = nil
 end)
+
+-- Cache tool instances when equipping to avoid GetDescendants every frame
+local function updateWeaponCache(tool)
+    table.clear(cachedWeaponParts)
+    if not tool then return end
+    
+    for _, descendant in pairs(tool:GetDescendants()) do
+        if descendant:IsA("Texture") then
+            if not removedTexturesCache[descendant] then
+                removedTexturesCache[descendant] = { Texture = descendant.Texture }
+            end
+            descendant.Texture = ""
+        elseif descendant:IsA("MeshPart") or descendant:IsA("BasePart") then
+            if not originalWeaponProperties[descendant] then
+                originalWeaponProperties[descendant] = {
+                    Color = descendant.Color,
+                    Transparency = descendant.Transparency,
+                    Material = descendant.Material,
+                    TextureID = descendant:IsA("MeshPart") and descendant.TextureID or nil
+                }
+            end
+            table.insert(cachedWeaponParts, descendant)
+        end
+    end
+end
 
 RunService.RenderStepped:Connect(function()
     local mouseLocationData = UserInputService:GetMouseLocation()
@@ -298,68 +257,26 @@ RunService.RenderStepped:Connect(function()
     local isMobile = (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
     local activeAnchor = isMobile and screenCenterVector or mouseLocationData
 
+    -- Weapon coloring logic (Cached)
     if rainbowWeaponEnabled then
-        local hue = (tick() % 3) / 3
-        local rainbowColor = Color3.fromHSV(hue, 1, 1)
         local characterModelData = LocalPlayer.Character
         if characterModelData then
             local equippedTool = characterModelData:FindFirstChildOfClass("Tool")
-            if equippedTool then
-                for _, descendant in pairs(equippedTool:GetDescendants()) do
-                    if descendant:IsA("Texture") then
-                        if not removedTexturesCache[descendant] then
-                            removedTexturesCache[descendant] = {
-                                Texture = descendant.Texture
-                            }
-                        end
-                        descendant.Texture = ""
-                    elseif descendant:IsA("MeshPart") then
-                        if not originalWeaponProperties[descendant] then
-                            originalWeaponProperties[descendant] = {
-                                Color = descendant.Color,
-                                Transparency = descendant.Transparency,
-                                Material = descendant.Material,
-                                TextureID = descendant.TextureID
-                            }
-                        end
-                        descendant.Color = rainbowColor
-                        descendant.Transparency = 0.4
-                        descendant.Material = Enum.Material.Neon
-                        descendant.TextureID = ""
-                    elseif descendant:IsA("SpecialMesh") then
-                        if not originalWeaponProperties[descendant] then
-                            originalWeaponProperties[descendant] = {
-                                TextureId = descendant.TextureId,
-                                VertexColor = descendant.VertexColor
-                            }
-                        end
-                        descendant.TextureId = ""
-                        descendant.VertexColor = Vector3.new(1, 1, 1)
-                        
-                        local parentPart = descendant.Parent
-                        if parentPart and parentPart:IsA("BasePart") then
-                            if not originalWeaponProperties[parentPart] then
-                                originalWeaponProperties[parentPart] = {
-                                    Color = parentPart.Color,
-                                    Transparency = parentPart.Transparency,
-                                    Material = parentPart.Material
-                                }
-                            end
-                            parentPart.Color = rainbowColor
-                            parentPart.Transparency = 0.4
-                            parentPart.Material = Enum.Material.Neon
-                        end
-                    elseif descendant:IsA("BasePart") then
-                        if not originalWeaponProperties[descendant] then
-                            originalWeaponProperties[descendant] = {
-                                Color = descendant.Color,
-                                Transparency = descendant.Transparency,
-                                Material = descendant.Material
-                            }
-                        end
-                        descendant.Color = rainbowColor
-                        descendant.Transparency = 0.4
-                        descendant.Material = Enum.Material.Neon
+            if equippedTool ~= currentEquippedTool then
+                currentEquippedTool = equippedTool
+                updateWeaponCache(equippedTool)
+            end
+            
+            if #cachedWeaponParts > 0 then
+                local hue = (tick() % 3) / 3
+                local rainbowColor = Color3.fromHSV(hue, 1, 1)
+                for i = 1, #cachedWeaponParts do
+                    local part = cachedWeaponParts[i]
+                    part.Color = rainbowColor
+                    part.Transparency = 0.4
+                    part.Material = Enum.Material.Neon
+                    if part:IsA("MeshPart") then
+                        part.TextureID = ""
                     end
                 end
             end
@@ -369,123 +286,94 @@ RunService.RenderStepped:Connect(function()
     if aimbotEnabled then
         targetingReticle.main.Radius = aimbotRadius
         targetingReticle.main.Position = activeAnchor
-        targetingReticle.inner.Radius = aimbotRadius - 1
-        targetingReticle.inner.Position = activeAnchor
-        targetingReticle.outer.Radius = aimbotRadius + 1
-        targetingReticle.outer.Position = activeAnchor
-        
         targetingReticle.main.Visible = true
-        targetingReticle.inner.Visible = true
-        targetingReticle.outer.Visible = true
     else
         targetingReticle.main.Visible = false
-        targetingReticle.inner.Visible = false
-        targetingReticle.outer.Visible = false
     end
     
     local targetLockedOnEnemy = nil
     local closestSelectionDistance = math.huge
 
+    -- Main Rendering Loop
     for npcModel, obj in pairs(cache) do
         if not npcModel or not npcModel.Parent then
             removeEsp(npcModel)
         else
             local targetPart = getTargetPart(npcModel)
-            local humanoid = npcModel:FindFirstChildOfClass("Humanoid")
             
-            if targetPart and humanoid then
-                local partCFrame = targetPart.CFrame
-                local topPositionScreenCharacterData, topOnScreenCharacterData = Camera:WorldToViewportPoint((partCFrame * CFrame.new(0, 3, 0)).Position)
-                local bottomPositionScreenCharacterData, bottomOnScreenCharacterData = Camera:WorldToViewportPoint((partCFrame * CFrame.new(0, -3, 0)).Position)
-                
+            if targetPart then
                 local magnitudeDistanceCharacterData = (Camera.CFrame.Position - targetPart.Position).Magnitude
                 
-                if espEnabled and (topOnScreenCharacterData or bottomOnScreenCharacterData) then
-                    local heightFrameBoundsCharacterData = math.abs(topPositionScreenCharacterData.Y - bottomPositionScreenCharacterData.Y)
-                    local widthFrameBoundsCharacterData = heightFrameBoundsCharacterData * 0.6
-                    local xOriginFrameBoundsCharacterData = bottomPositionScreenCharacterData.X - (widthFrameBoundsCharacterData / 2)
-                    local yOriginFrameBoundsCharacterData = topPositionScreenCharacterData.Y
-                    local xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData = xOriginFrameBoundsCharacterData + widthFrameBoundsCharacterData, yOriginFrameBoundsCharacterData + heightFrameBoundsCharacterData
+                -- Skip processing entirely if entity is too far away
+                if magnitudeDistanceCharacterData <= maxTargetDistanceStuds then
+                    local partCFrame = targetPart.CFrame
+                    local topPositionScreenCharacterData, topOnScreenCharacterData = Camera:WorldToViewportPoint((partCFrame * CFrame.new(0, 3, 0)).Position)
+                    local bottomPositionScreenCharacterData, bottomOnScreenCharacterData = Camera:WorldToViewportPoint((partCFrame * CFrame.new(0, -3, 0)).Position)
                     
-                    obj.t.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)   obj.t.To = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
-                    obj.b.From = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)  obj.b.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
-                    obj.l.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)   obj.l.To = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
-                    obj.r.From = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)  obj.r.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
-                    
-                    obj.ot.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData - 1)   obj.ot.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData - 1)
-                    obj.ob.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData + 1)  obj.ob.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData + 1)
-                    obj.ol.From = Vector2.new(xOriginFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData - 1)   obj.ol.To = Vector2.new(xOriginFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData + 1)
-                    obj.or_.From = Vector2.new(xEndFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData - 1)  obj.or_.To = Vector2.new(xEndFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData + 1)
-                    
-                    obj.it.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData + 1)   obj.it.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yOriginFrameBoundsCharacterData + 1)
-                    obj.ib.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData - 1)  obj.ib.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData - 1)
-                    obj.il.From = Vector2.new(xOriginFrameBoundsCharacterData + 1, yOriginFrameBoundsCharacterData + 1)   obj.il.To = Vector2.new(xOriginFrameBoundsCharacterData + 1, yEndFrameBoundsCharacterData - 1)
-                    obj.ir.From = Vector2.new(xEndFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData + 1)  obj.ir.To = Vector2.new(xEndFrameBoundsCharacterData - 1, yEndFrameBoundsCharacterData - 1)
-                    
-                    obj.t.Visible = true; obj.b.Visible = true; obj.l.Visible = true; obj.r.Visible = true
-                    obj.ot.Visible = true; obj.ob.Visible = true; obj.ol.Visible = true; obj.or_.Visible = true
-                    obj.it.Visible = true; obj.ib.Visible = true; obj.il.Visible = true; obj.ir.Visible = true
-                    
-                    if magnitudeDistanceCharacterData < 400 then
-                        local fontSizeFrameCharacterData = math.clamp(math.floor(13 - (magnitudeDistanceCharacterData / 45)), 9, 13)
+                    if espEnabled and (topOnScreenCharacterData or bottomOnScreenCharacterData) then
+                        local heightFrameBoundsCharacterData = math.abs(topPositionScreenCharacterData.Y - bottomPositionScreenCharacterData.Y)
+                        local widthFrameBoundsCharacterData = heightFrameBoundsCharacterData * 0.6
+                        local xOriginFrameBoundsCharacterData = bottomPositionScreenCharacterData.X - (widthFrameBoundsCharacterData / 2)
+                        local yOriginFrameBoundsCharacterData = topPositionScreenCharacterData.Y
+                        local xEndFrameBoundsCharacterData = xOriginFrameBoundsCharacterData + widthFrameBoundsCharacterData
+                        local yEndFrameBoundsCharacterData = yOriginFrameBoundsCharacterData + heightFrameBoundsCharacterData
                         
-                        obj.hp.Size = fontSizeFrameCharacterData
-                        obj.hp.Text = math.floor(humanoid.Health) .. "hp"
-                        obj.hp.Position = Vector2.new(bottomPositionScreenCharacterData.X, yEndFrameBoundsCharacterData + 2)
-                        obj.hp.Visible = true
+                        obj.t.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
+                        obj.t.To = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
+                        
+                        obj.b.From = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                        obj.b.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                        
+                        obj.l.From = Vector2.new(xOriginFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
+                        obj.l.To = Vector2.new(xOriginFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                        
+                        obj.r.From = Vector2.new(xEndFrameBoundsCharacterData, yOriginFrameBoundsCharacterData)
+                        obj.r.To = Vector2.new(xEndFrameBoundsCharacterData, yEndFrameBoundsCharacterData)
+                        
+                        obj.t.Visible = true; obj.b.Visible = true; obj.l.Visible = true; obj.r.Visible = true
+                        
+                        local humanoid = npcModel:FindFirstChildOfClass("Humanoid")
+                        if humanoid and magnitudeDistanceCharacterData < 250 then
+                            local fontSizeFrameCharacterData = math.clamp(math.floor(13 - (magnitudeDistanceCharacterData / 45)), 9, 13)
+                            obj.hp.Size = fontSizeFrameCharacterData
+                            obj.hp.Text = math.floor(humanoid.Health) .. "hp"
+                            obj.hp.Position = Vector2.new(bottomPositionScreenCharacterData.X, yEndFrameBoundsCharacterData + 2)
+                            obj.hp.Visible = true
+                        else
+                            obj.hp.Visible = false
+                        end
                     else
+                        obj.t.Visible = false; obj.b.Visible = false; obj.l.Visible = false; obj.r.Visible = false
                         obj.hp.Visible = false
                     end
-                else
-                    obj.t.Visible = false; obj.b.Visible = false; obj.l.Visible = false; obj.r.Visible = false
-                    obj.ot.Visible = false; obj.ob.Visible = false; obj.ol.Visible = false; obj.or_.Visible = false
-                    obj.it.Visible = false; obj.ib.Visible = false; obj.il.Visible = false; obj.ir.Visible = false
-                    obj.hp.Visible = false
-                end
-                
-                if tracersEnabled and bottomOnScreenCharacterData then
-                    local vector2OriginCharacterData = Vector2.new(bottomPositionScreenCharacterData.X, bottomPositionScreenCharacterData.Y)
-                    obj.tracerMain.From = screenCenterBottomOffset
-                    obj.tracerMain.To = vector2OriginCharacterData
                     
-                    local magnitudeMagnitudeTracerVectorData = (vector2OriginCharacterData - screenCenterBottomOffset).Magnitude
-                    if magnitudeMagnitudeTracerVectorData > 0 then
-                        local vector2NormalVectorData = (vector2OriginCharacterData - screenCenterBottomOffset).Unit
-                        local vector2TangentVectorData = Vector2.new(-vector2NormalVectorData.Y, vector2NormalVectorData.X)
-                        
-                        obj.tracerLeftOutline.From = screenCenterBottomOffset - vector2TangentVectorData
-                        obj.tracerLeftOutline.To = vector2OriginCharacterData - vector2TangentVectorData
-                        
-                        obj.tracerRightOutline.From = screenCenterBottomOffset + vector2TangentVectorData
-                        obj.tracerRightOutline.To = vector2OriginCharacterData + vector2TangentVectorData
-                        
+                    if tracersEnabled and bottomOnScreenCharacterData then
+                        obj.tracerMain.From = screenCenterBottomOffset
+                        obj.tracerMain.To = Vector2.new(bottomPositionScreenCharacterData.X, bottomPositionScreenCharacterData.Y)
                         obj.tracerMain.Visible = true
-                        obj.tracerLeftOutline.Visible = true
-                        obj.tracerRightOutline.Visible = true
                     else
                         obj.tracerMain.Visible = false
-                        obj.tracerLeftOutline.Visible = false
-                        obj.tracerRightOutline.Visible = false
+                    end
+
+                    if aimbotEnabled and (topOnScreenCharacterData or bottomOnScreenCharacterData) then
+                        local screenPos = Vector2.new(bottomPositionScreenCharacterData.X, (topPositionScreenCharacterData.Y + bottomPositionScreenCharacterData.Y) / 2)
+                        local screenDistance = (screenPos - activeAnchor).Magnitude
+                        
+                        if screenDistance < aimbotRadius and screenDistance < closestSelectionDistance then
+                            closestSelectionDistance = screenDistance
+                            targetLockedOnEnemy = targetPart
+                        end
                     end
                 else
+                    -- Hide drawings for out-of-range entities
+                    obj.t.Visible = false; obj.b.Visible = false; obj.l.Visible = false; obj.r.Visible = false
                     obj.tracerMain.Visible = false
-                    obj.tracerLeftOutline.Visible = false
-                    obj.tracerRightOutline.Visible = false
-                end
-
-                if aimbotEnabled and magnitudeDistanceCharacterData < maxTargetDistanceStuds and (topOnScreenCharacterData or bottomOnScreenCharacterData) then
-                    local screenPos = Vector2.new(bottomPositionScreenCharacterData.X, (topPositionScreenCharacterData.Y + bottomPositionScreenCharacterData.Y) / 2)
-                    local screenDistance = (screenPos - activeAnchor).Magnitude
-                    
-                    if screenDistance < aimbotRadius and screenDistance < closestSelectionDistance then
-                        closestSelectionDistance = screenDistance
-                        targetLockedOnEnemy = targetPart
-                    end
+                    obj.hp.Visible = false
                 end
             else
-                for _, item in pairs(obj) do
-                    item.Visible = false
-                end
+                obj.t.Visible = false; obj.b.Visible = false; obj.l.Visible = false; obj.r.Visible = false
+                obj.tracerMain.Visible = false
+                obj.hp.Visible = false
             end
         end
     end
